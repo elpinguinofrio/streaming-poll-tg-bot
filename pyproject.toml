@@ -1,0 +1,22 @@
+[project]
+name = "streaming-poll-tg-bot"
+version = "0"
+description = "Telegram bot collecting audience topic suggestions (text/voice) with author summaries"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "aiogram>=3.31",
+    "groq>=1.7",
+    "aiosqlite>=0.22",
+    "pydantic-settings>=2.15",
+    "python-dotenv>=1.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
