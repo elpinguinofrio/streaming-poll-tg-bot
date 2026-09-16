@@ -11,12 +11,14 @@ from aiogram.types import Message, ReactionTypeEmoji
 
 from bot import texts
 from bot.storage import Storage
-from bot.summary import split_message
+from bot.summary import split_message, truncate_utf16
 from bot.version import get_version
 
 log = logging.getLogger(__name__)
 
 THUMBS_UP = [ReactionTypeEmoji(emoji="👍")]
+KIND_ICONS = {"text": "💬", "voice": "🎙"}
+NOTIFY_TEXT_LIMIT = 3500  # leaves room for the header within Telegram's 4096 UTF-16 units
 
 
 @dataclass(frozen=True)
@@ -51,9 +53,27 @@ async def _answer_safely(message: Message, text: str) -> bool:
         return False
 
 
-async def _save_and_ack(message: Message, storage: Storage, kind: str, text: str) -> None:
+def _sender_label(message: Message) -> str:
+    user = message.from_user
+    handle = f"@{user.username}" if user.username else user.full_name
+    return f"{handle} (id {user.id})"
+
+
+async def _notify_author(bot: Bot, author_id: int | None, message: Message, kind: str, text: str) -> None:
+    if author_id is None:
+        return
+    note = texts.NEW_SUGGESTION.format(icon=KIND_ICONS[kind], sender=_sender_label(message),
+                                       text=truncate_utf16(text.strip(), NOTIFY_TEXT_LIMIT))
     try:
-        await storage.add(
+        await bot.send_message(author_id, note)
+    except Exception as exc:
+        log.error("failed to notify author: %s", type(exc).__name__)
+
+
+async def _save_and_ack(message: Message, storage: Storage, kind: str, text: str,
+                        bot: Bot, author_id: int | None) -> None:
+    try:
+        inserted_id = await storage.add(
             user_id=message.from_user.id,
             username=_display_name(message),
             kind=kind,
@@ -70,6 +90,8 @@ async def _save_and_ack(message: Message, storage: Storage, kind: str, text: str
     except Exception as exc:
         log.error("failed to set reaction: %s", type(exc).__name__)
         await _answer_safely(message, texts.SAVED_FALLBACK)
+    if inserted_id is not None:
+        await _notify_author(bot, author_id, message, kind, text)
 
 
 def create_router(author_id: int | None, limits: Limits) -> Router:
@@ -115,8 +137,8 @@ def create_router(author_id: int | None, limits: Limits) -> Router:
                 break
 
     @router.message(F.text & ~F.text.startswith("/"))
-    async def on_text(message: Message, storage: Storage) -> None:
-        await _save_and_ack(message, storage, "text", message.text)
+    async def on_text(message: Message, bot: Bot, storage: Storage) -> None:
+        await _save_and_ack(message, storage, "text", message.text, bot, author_id)
 
     @router.message(F.voice)
     async def on_voice(message: Message, bot: Bot, storage: Storage, speech: Speech) -> None:
@@ -138,7 +160,7 @@ def create_router(author_id: int | None, limits: Limits) -> Router:
         if not transcript.strip():
             await _answer_safely(message, texts.VOICE_FAILED)
             return
-        await _save_and_ack(message, storage, "voice", transcript)
+        await _save_and_ack(message, storage, "voice", transcript, bot, author_id)
 
     @router.message()
     async def on_other(message: Message) -> None:

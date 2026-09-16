@@ -2,7 +2,7 @@ from aiogram.types import ReactionTypeEmoji
 
 from bot import texts
 from bot.handlers import create_dispatcher
-from tests.conftest import AUTHOR_ID, FakeSpeech, FakeSummarizer, make_update
+from tests.conftest import AUTHOR_ID, VIEWER_ID, FakeSpeech, FakeSummarizer, make_update
 
 
 def _dp(storage):
@@ -65,7 +65,7 @@ async def test_reaction_failure_falls_back_to_text(bot, session, storage):
     session.fail_reaction = True
     await _dp(storage).feed_update(bot, make_update(text="идея"))
     assert await storage.count() == 1
-    assert session.sent_texts() == [texts.SAVED_FALLBACK]
+    assert session.sent_to(VIEWER_ID) == [texts.SAVED_FALLBACK]
 
 
 async def test_reaction_and_fallback_failure_does_not_raise(bot, session, storage):

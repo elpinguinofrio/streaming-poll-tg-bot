@@ -2,7 +2,7 @@ from aiogram.types import ReactionTypeEmoji
 
 from bot import texts
 from bot.handlers import create_dispatcher
-from tests.conftest import AUTHOR_ID, FakeSpeech, FakeSummarizer, make_update
+from tests.conftest import AUTHOR_ID, VIEWER_ID, FakeSpeech, FakeSummarizer, make_update
 
 
 def _dp(storage, speech):
@@ -17,7 +17,7 @@ async def test_voice_transcribed_saved_thumbs_up(bot, session, storage):
     assert [(i.kind, i.text, i.message_id) for i in items] == [("voice", "сделай выпуск про роботов", 77)]
     [reaction] = session.reactions()
     assert reaction.message_id == 77 and reaction.reaction == [ReactionTypeEmoji(emoji="👍")]
-    assert session.sent_texts() == []
+    assert session.sent_to(VIEWER_ID) == []
 
 
 async def test_voice_stt_error_no_save_no_thumbs(bot, session, storage):

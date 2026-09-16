@@ -1,7 +1,7 @@
 # Streaming Poll TG Bot
 
 Telegram bot: viewers DM topic ideas (text or voice), the bot saves them and reacts 👍;
-the author gets a themed digest with `/summary`. Specs: `specs/001-topic-suggestions-bot/`.
+the author gets a notification for every new suggestion and a themed digest with `/summary`.
 
 ## Setup
 1. Fill `.env` using `.env.example` (never show it on stream). Unknown author id → run bot, DM `/whoami`.
@@ -16,4 +16,4 @@ Data: SQLite at `~/.local/share/streaming-poll-tg-bot/suggestions.db` (local dis
 - `uv run pytest -q`
 
 ## Commands
-`/start` welcome · `/whoami` your Telegram id · `/summary` author-only digest
+`/start` welcome · `/version` version · `/whoami` your Telegram id · `/summary` author-only digest

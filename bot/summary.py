@@ -50,6 +50,13 @@ def _max_prefix(text: str, limit: int) -> int:
     return len(text)
 
 
+def truncate_utf16(text: str, limit: int) -> str:
+    """Cut text to <= limit UTF-16 units, marking the cut with an ellipsis."""
+    if utf16_len(text) <= limit:
+        return text
+    return text[: _max_prefix(text, limit - 1)] + "…"
+
+
 def split_message(text: str, limit: int = TELEGRAM_SAFE_LIMIT) -> list[str]:
     """Split text into chunks of <= limit UTF-16 units, preferring newline boundaries.
 

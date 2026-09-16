@@ -66,6 +66,9 @@ class MockedSession(BaseSession):
     def sent_texts(self) -> list[str]:
         return [m.text for m in self.calls(SendMessage)]
 
+    def sent_to(self, chat_id: int) -> list[str]:
+        return [m.text for m in self.calls(SendMessage) if m.chat_id == chat_id]
+
 
 class FakeSpeech:
     def __init__(self, result: str = "расскажи про нейросети", error: Exception | None = None,
