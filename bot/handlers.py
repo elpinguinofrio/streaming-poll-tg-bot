@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from io import BytesIO
 from typing import Protocol
 
@@ -13,6 +14,7 @@ from bot import texts
 from bot.storage import Storage
 from bot.summary import split_message, truncate_utf16
 from bot.version import get_version
+from bot.voice_archive import VoiceArchive
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +32,8 @@ class Limits:
 
 
 class Speech(Protocol):
+    model: str
+
     async def transcribe(self, data: bytes, filename: str) -> str: ...
 
 
@@ -70,8 +74,12 @@ async def _notify_author(bot: Bot, author_id: int | None, message: Message, kind
         log.error("failed to notify author: %s", type(exc).__name__)
 
 
+class _ArchiveError(Exception):
+    pass
+
+
 async def _save_and_ack(message: Message, storage: Storage, kind: str, text: str,
-                        bot: Bot, author_id: int | None) -> None:
+                        bot: Bot, author_id: int | None, **voice_fields: str) -> None:
     try:
         inserted_id = await storage.add(
             user_id=message.from_user.id,
@@ -80,6 +88,7 @@ async def _save_and_ack(message: Message, storage: Storage, kind: str, text: str
             text=text,
             chat_id=message.chat.id,
             message_id=message.message_id,
+            **voice_fields,
         )  # None means an already-stored duplicate delivery: still persisted, so still acknowledged
     except Exception as exc:  # log type only: messages may carry URLs with secrets
         log.error("failed to save %s suggestion: %s", kind, type(exc).__name__)
@@ -141,18 +150,30 @@ def create_router(author_id: int | None, limits: Limits) -> Router:
         await _save_and_ack(message, storage, "text", message.text, bot, author_id)
 
     @router.message(F.voice)
-    async def on_voice(message: Message, bot: Bot, storage: Storage, speech: Speech) -> None:
-        size = message.voice.file_size
-        if size is not None and size > limits.max_voice_bytes:
+    async def on_voice(message: Message, bot: Bot, storage: Storage, speech: Speech,
+                       voice_archive: VoiceArchive) -> None:
+        voice = message.voice
+        if voice.file_size is not None and voice.file_size > limits.max_voice_bytes:
             await _answer_safely(message, texts.VOICE_TOO_LARGE)
             return
         try:
             async with stt_slots, asyncio.timeout(limits.stt_timeout_s):
-                buffer = await bot.download(message.voice, destination=BytesIO())
-                transcript = await speech.transcribe(buffer.getvalue(), "voice.ogg")
+                buffer = await bot.download(voice, destination=BytesIO())
+                data = buffer.getvalue()
+                try:  # keep the original before transcribing, so it survives STT failures too
+                    voice_path = await voice_archive.save(data, chat_id=message.chat.id,
+                                                          message_id=message.message_id,
+                                                          file_unique_id=voice.file_unique_id)
+                except Exception as exc:
+                    raise _ArchiveError(type(exc).__name__) from exc
+                transcript = await speech.transcribe(data, "voice.ogg")
         except TimeoutError:
             log.error("voice transcription timed out")
             await _answer_safely(message, texts.VOICE_TIMEOUT)
+            return
+        except _ArchiveError as exc:
+            log.error("failed to archive voice: %s", exc)
+            await _answer_safely(message, texts.SAVE_FAILED)
             return
         except Exception as exc:  # download errors can include the token-bearing file URL
             log.error("voice transcription failed: %s", type(exc).__name__)
@@ -160,7 +181,8 @@ def create_router(author_id: int | None, limits: Limits) -> Router:
         if not transcript.strip():
             await _answer_safely(message, texts.VOICE_FAILED)
             return
-        await _save_and_ack(message, storage, "voice", transcript, bot, author_id)
+        await _save_and_ack(message, storage, "voice", transcript, bot, author_id,
+                            voice_path=voice_path, voice_file_id=voice.file_id, stt_model=speech.model)
 
     @router.message()
     async def on_other(message: Message) -> None:
@@ -170,9 +192,11 @@ def create_router(author_id: int | None, limits: Limits) -> Router:
 
 
 def create_dispatcher(*, storage: Storage, speech: Speech, summarizer: Summarizer, author_id: int | None,
-                      limits: Limits = Limits()) -> Dispatcher:
+                      limits: Limits = Limits(), voice_archive: VoiceArchive | None = None) -> Dispatcher:
     dp = Dispatcher()
     dp["storage"] = storage
+    # Default: originals live next to the database (local disk), e.g. ~/.local/share/<app>/voices/
+    dp["voice_archive"] = voice_archive or VoiceArchive(Path(storage.path).parent / "voices")
     dp["speech"] = speech
     dp["summarizer"] = summarizer
     dp.include_router(create_router(author_id, limits))

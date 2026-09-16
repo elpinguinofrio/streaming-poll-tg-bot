@@ -71,6 +71,8 @@ class MockedSession(BaseSession):
 
 
 class FakeSpeech:
+    model = "fake-stt-model"
+
     def __init__(self, result: str = "расскажи про нейросети", error: Exception | None = None,
                  delay: float = 0.0) -> None:
         self.result, self.error, self.delay, self.calls = result, error, delay, []

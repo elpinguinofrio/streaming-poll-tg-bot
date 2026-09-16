@@ -79,3 +79,53 @@ async def test_voice_download_failure(bot, session, storage):
     assert speech.calls == []
     assert session.sent_texts() == [texts.VOICE_FAILED]
     assert await storage.count() == 0
+
+
+from pathlib import Path
+
+from bot.voice_archive import VoiceArchive
+
+
+async def test_voice_original_archived_next_to_db_and_linked_in_row(bot, session, storage):
+    await _dp(storage, FakeSpeech(result="про монтаж")).feed_update(bot, make_update(voice=True, message_id=55))
+    [row] = await storage.list_all()
+    expected = Path(storage.path).parent / "voices" / f"{VIEWER_ID}_55_vu-1.ogg"
+    assert Path(row.voice_path) == expected
+    assert expected.read_bytes() == session.file_bytes
+    assert row.voice_file_id == "voice-1"
+    assert row.stt_model == FakeSpeech.model
+    assert len(session.reactions()) == 1
+
+
+async def test_reaction_only_after_row_and_original_exist(bot, session, storage):
+    seen = []
+
+    async def check(method):
+        [row] = await storage.list_all()
+        seen.append(Path(row.voice_path).is_file())
+
+    session.on_reaction = check
+    await _dp(storage, FakeSpeech()).feed_update(bot, make_update(voice=True))
+    assert seen == [True]
+
+
+async def test_archive_failure_no_row_no_thumbs(bot, session, storage):
+    class BrokenArchive(VoiceArchive):
+        async def save(self, *args, **kwargs):
+            raise OSError("disk full")
+
+    speech = FakeSpeech()
+    dp = create_dispatcher(storage=storage, speech=speech, summarizer=FakeSummarizer(), author_id=AUTHOR_ID,
+                           voice_archive=BrokenArchive("/nonexistent"))
+    await dp.feed_update(bot, make_update(voice=True))
+    assert await storage.count() == 0
+    assert session.reactions() == []
+    assert session.sent_to(VIEWER_ID) == [texts.SAVE_FAILED]
+    assert speech.calls == []
+
+
+async def test_stt_failure_still_keeps_original_for_later(bot, session, storage):
+    await _dp(storage, FakeSpeech(error=RuntimeError("stt down"))).feed_update(bot, make_update(voice=True, message_id=9))
+    assert await storage.count() == 0
+    assert (Path(storage.path).parent / "voices" / f"{VIEWER_ID}_9_vu-1.ogg").is_file()
+    assert session.sent_to(VIEWER_ID) == [texts.VOICE_FAILED]
